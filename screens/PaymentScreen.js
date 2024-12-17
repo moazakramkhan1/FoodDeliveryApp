@@ -1,48 +1,58 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { useStripe } from '@stripe/stripe-react-native';
 
 const PaymentScreen = ({ route, navigation }) => {
     const { totalAmount, restaurantId } = route.params;
     const [paymentMethod, setPaymentMethod] = useState(null);
+    const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
-    const handleCOD = () => {
-        setPaymentMethod('Cash on Delivery');
-        showSuccessMessage('Cash on Delivery');
+    const fetchPaymentIntent = async () => {
+        try {
+            
+            const response = await fetch('http://192.168.1.13:3000/create-payment-intent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ amount: totalAmount * 100 }), 
+            });
+
+            const { paymentIntent } = await response.json();
+            return paymentIntent;
+        } catch (error) {
+            console.error('Error fetching PaymentIntent:', error);
+            Alert.alert('Error', 'Unable to fetch payment intent.');
+        }
     };
 
-    const handleJazzCash = () => {
-        Alert.prompt(
-            'JazzCash Payment',
-            'Enter your JazzCash number:',
-            (input) => {
-                if (input && input.trim() !== '') {
-                    setPaymentMethod('JazzCash');
-                    showSuccessMessage('JazzCash');
-                } else {
-                    Alert.alert('Error', 'Invalid JazzCash number');
-                }
-            },
-            'plain-text',
-            '',
-            'number-pad'
-        );
-    };
-    const handleDebitCard = () => {
-        Alert.prompt(
-            'Debit Card Payment',
-            'Enter your Debit Card number:',
-            (input) => {
-                if (input && input.trim().length === 16) {
-                    setPaymentMethod('Debit Card');
-                    showSuccessMessage('Debit Card');
-                } else {
-                    Alert.alert('Error', 'Invalid Debit Card number. It must be 16 digits.');
-                }
-            },
-            'plain-text',
-            '',
-            'number-pad'
-        );
+    const handleDebitCard = async () => {
+        try {
+            const clientSecret = await fetchPaymentIntent();
+            if (!clientSecret) return;
+
+            
+            const { error } = await initPaymentSheet({
+                paymentIntentClientSecret: clientSecret,
+                merchantDisplayName: 'Your Business Name',
+                returnURL: 'myapp://stripe-redirect',
+            });
+
+            if (error) {
+                console.error('PaymentSheet init error:', error);
+                return;
+            }
+
+           
+            const { error: paymentError } = await presentPaymentSheet();
+
+            if (paymentError) {
+                Alert.alert('Payment Failed', paymentError.message);
+            } else {
+                setPaymentMethod('Debit Card');
+                showSuccessMessage('Stripe Debit Card');
+            }
+        } catch (error) {
+            console.error('Error handling payment:', error);
+        }
     };
 
     const showSuccessMessage = (method) => {
@@ -52,7 +62,8 @@ const PaymentScreen = ({ route, navigation }) => {
             [
                 {
                     text: 'OK',
-                    onPress: () => navigation.navigate('TrackingScreen', { paymentMethod: method, totalAmount, restaurantId }),
+                    onPress: () =>
+                        navigation.navigate('TrackingScreen', { paymentMethod: method, totalAmount, restaurantId }),
                 },
             ]
         );
@@ -62,14 +73,12 @@ const PaymentScreen = ({ route, navigation }) => {
         <View style={styles.container}>
             <Text style={styles.header}>Select Payment Method</Text>
 
-            <TouchableOpacity style={styles.paymentOption} onPress={handleCOD}>
+            <TouchableOpacity style={styles.paymentOption} onPress={() => showSuccessMessage('Cash on Delivery')}>
                 <Text style={styles.paymentText}>Cash on Delivery</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.paymentOption} onPress={handleJazzCash}>
-                <Text style={styles.paymentText}>JazzCash</Text>
-            </TouchableOpacity>
+
             <TouchableOpacity style={styles.paymentOption} onPress={handleDebitCard}>
-                <Text style={styles.paymentText}>Debit Card</Text>
+                <Text style={styles.paymentText}>Debit Card (Stripe)</Text>
             </TouchableOpacity>
         </View>
     );
